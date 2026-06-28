@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
+import { LIMITS, asUuid, clampString } from '@/lib/validation'
+
+const VALID_EVENT_TYPES = new Set([
+  'focus', 'blur', 'field_time', 'rage_click', 'abandon', 'submit',
+])
 
 // POST /api/events
 // Recebe eventos UX do questionário via fetch/sendBeacon
@@ -18,19 +23,21 @@ export async function POST(request: NextRequest) {
       body = JSON.parse(text)
     }
 
-    const events = Array.isArray(body) ? body : [body]
+    const events = (Array.isArray(body) ? body : [body]).slice(0, LIMITS.MAX_EVENTS)
     const supabase = createServiceClient()
 
     const rows = events
       .filter(
         (e): e is Record<string, unknown> =>
-          typeof e === 'object' && e !== null && 'event_type' in e
+          typeof e === 'object' && e !== null && 'event_type' in e &&
+          VALID_EVENT_TYPES.has((e as Record<string, unknown>).event_type as string)
       )
       .map((e) => ({
-        scan_id: (e.scan_id as string) ?? null,
+        scan_id: asUuid(e.scan_id),
         event_type: e.event_type as string,
-        field_name: (e.field_name as string) ?? null,
-        metadata: (e.metadata as object) ?? null,
+        field_name: e.field_name ? clampString(e.field_name, LIMITS.MAX_FIELD_NAME_LEN) : null,
+        metadata:
+          e.metadata && typeof e.metadata === 'object' ? (e.metadata as object) : null,
       }))
 
     if (rows.length > 0) {

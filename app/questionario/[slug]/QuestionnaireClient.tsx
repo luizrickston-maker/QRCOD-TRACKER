@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, FormEvent, useRef } from 'react'
+import { useState, useEffect, useCallback, FormEvent, useRef } from 'react'
 import { useUXTracker } from '@/hooks/useUXTracker'
 
 interface Question {
@@ -27,6 +27,25 @@ interface Props {
   scanId: string | null
 }
 
+// ── Validação e formatação ──
+
+function formatPhone(value: string): string {
+  const digits = value.replace(/\D/g, '').slice(0, 11)
+  if (digits.length <= 2) return digits.length ? `(${digits}` : ''
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
+  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`
+}
+
+function isValidPhone(value: string): boolean {
+  const digits = value.replace(/\D/g, '')
+  return digits.length === 10 || digits.length === 11
+}
+
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
 export default function QuestionnaireClient({
   slug,
   brandName,
@@ -35,15 +54,73 @@ export default function QuestionnaireClient({
   scanId,
 }: Props) {
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({})
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const startTime = useRef(Date.now())
+  const submittedRef = useRef(false)
+  const lastFieldRef = useRef<string>('')
 
-  const { onFieldFocus, onFieldBlur, onFieldClick, onSubmit: trackSubmit } = useUXTracker(scanId)
+  const { onFieldFocus: origOnFieldFocus, onFieldBlur, onFieldClick, onSubmit: trackSubmit } = useUXTracker(scanId)
+
+  // Wrap onFieldFocus to track last field
+  const onFieldFocus = useCallback((label: string) => {
+    lastFieldRef.current = label
+    origOnFieldFocus(label)
+  }, [origOnFieldFocus])
+
+  // ── sendBeacon: abandono do formulário ──
+  useEffect(() => {
+    function handleBeforeUnload() {
+      if (submittedRef.current) return
+
+      // Monta respostas parciais com labels
+      const partialAnswers: Record<string, string> = {}
+      let hasPhone = false
+
+      for (const q of questions) {
+        const raw = answers[q.id]
+        const value = Array.isArray(raw) ? raw.join(', ') : (raw ?? '')
+        if (value.trim()) {
+          partialAnswers[q.label] = value
+          if (q.type === 'phone' || q.label.toLowerCase().includes('telefone') || q.label.toLowerCase().includes('whatsapp')) {
+            hasPhone = true
+          }
+        }
+      }
+
+      // Só envia se tiver telefone preenchido
+      if (!hasPhone) return
+
+      const timeOnPage = Math.round((Date.now() - startTime.current) / 1000)
+
+      const payload = JSON.stringify({
+        partial_answers: partialAnswers,
+        last_field: lastFieldRef.current || 'unknown',
+        time_on_page_seconds: timeOnPage,
+      })
+
+      navigator.sendBeacon(`/api/abandon/${slug}`, new Blob([payload], { type: 'application/json' }))
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [answers, questions, slug])
 
   function setAnswer(questionId: string, value: string | string[]) {
     setAnswers((prev) => ({ ...prev, [questionId]: value }))
+    // Limpa erro ao digitar
+    setFieldErrors((prev) => {
+      const next = { ...prev }
+      delete next[questionId]
+      return next
+    })
+  }
+
+  function handlePhoneChange(questionId: string, rawValue: string) {
+    const formatted = formatPhone(rawValue)
+    setAnswer(questionId, formatted)
   }
 
   function toggleCheckbox(questionId: string, option: string) {
@@ -58,8 +135,37 @@ export default function QuestionnaireClient({
     })
   }
 
+  function validate(): boolean {
+    const errors: Record<string, string> = {}
+
+    for (const q of questions) {
+      const raw = answers[q.id]
+      const value = Array.isArray(raw) ? raw.join('') : (raw ?? '')
+
+      if (q.required && !value.trim()) {
+        errors[q.id] = 'Campo obrigatório'
+        continue
+      }
+
+      if (value.trim()) {
+        if (q.type === 'email' && !isValidEmail(value)) {
+          errors[q.id] = 'E-mail inválido. Inclua o @'
+        }
+        if (q.type === 'phone' && !isValidPhone(value)) {
+          errors[q.id] = 'Número inválido. Use (00) 00000-0000'
+        }
+      }
+    }
+
+    setFieldErrors(errors)
+    return Object.keys(errors).length === 0
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
+
+    if (!validate()) return
+
     setSubmitting(true)
     setError(null)
 
@@ -88,6 +194,7 @@ export default function QuestionnaireClient({
     })
 
     if (res.ok) {
+      submittedRef.current = true
       setSubmitted(true)
     } else {
       const data = await res.json()
@@ -140,111 +247,135 @@ export default function QuestionnaireClient({
             </div>
 
             {/* Fields */}
-            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
+            <form onSubmit={handleSubmit} noValidate className="px-6 py-5 space-y-5">
               {questions.length === 0 ? (
                 <p className="text-gray-400 text-center py-4 text-sm">
                   Este formulário não possui perguntas ainda.
                 </p>
               ) : (
-                questions.map((q) => (
-                  <div key={q.id}>
-                    <label className="block text-sm font-medium text-gray-800 mb-1.5">
-                      {q.label}
-                      {q.required && <span className="text-red-500 ml-1">*</span>}
-                    </label>
+                questions.map((q) => {
+                  const fieldError = fieldErrors[q.id]
+                  const errorClasses = fieldError
+                    ? 'border-red-400 focus:border-red-500 focus:ring-red-500'
+                    : 'border-gray-300 focus:border-blue-500 focus:ring-blue-500'
 
-                    {/* text / email / phone / number */}
-                    {['text', 'email', 'phone', 'number'].includes(q.type) && (
-                      <input
-                        type={q.type === 'phone' ? 'tel' : q.type}
-                        value={(answers[q.id] as string) ?? ''}
-                        onChange={(e) => setAnswer(q.id, e.target.value)}
-                        onFocus={() => onFieldFocus(q.label)}
-                        onBlur={() => onFieldBlur(q.label)}
-                        onClick={() => onFieldClick(q.label)}
-                        required={q.required}
-                        placeholder={q.placeholder ?? ''}
-                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-gray-900 text-sm placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                      />
-                    )}
+                  return (
+                    <div key={q.id}>
+                      <label className="block text-sm font-medium text-gray-800 mb-1.5">
+                        {q.label}
+                        {q.required && <span className="text-red-500 ml-1">*</span>}
+                      </label>
 
-                    {/* textarea */}
-                    {q.type === 'textarea' && (
-                      <textarea
-                        value={(answers[q.id] as string) ?? ''}
-                        onChange={(e) => setAnswer(q.id, e.target.value)}
-                        onFocus={() => onFieldFocus(q.label)}
-                        onBlur={() => onFieldBlur(q.label)}
-                        required={q.required}
-                        placeholder={q.placeholder ?? ''}
-                        rows={3}
-                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-gray-900 text-sm placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors resize-none"
-                      />
-                    )}
+                      {/* text / email / number */}
+                      {['text', 'email', 'number'].includes(q.type) && (
+                        <input
+                          type={q.type}
+                          value={(answers[q.id] as string) ?? ''}
+                          onChange={(e) => setAnswer(q.id, e.target.value)}
+                          onFocus={() => onFieldFocus(q.label)}
+                          onBlur={() => onFieldBlur(q.label)}
+                          onClick={() => onFieldClick(q.label)}
+                          placeholder={q.placeholder ?? ''}
+                          className={`w-full px-3.5 py-2.5 border rounded-xl text-gray-900 text-sm placeholder-gray-400 focus:outline-none focus:ring-1 transition-colors ${errorClasses}`}
+                        />
+                      )}
 
-                    {/* select */}
-                    {q.type === 'select' && (
-                      <select
-                        value={(answers[q.id] as string) ?? ''}
-                        onChange={(e) => setAnswer(q.id, e.target.value)}
-                        onFocus={() => onFieldFocus(q.label)}
-                        onBlur={() => onFieldBlur(q.label)}
-                        required={q.required}
-                        className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl text-gray-900 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors bg-white"
-                      >
-                        <option value="">{q.placeholder || 'Selecione...'}</option>
-                        {(q.options ?? []).map((opt) => (
-                          <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                      </select>
-                    )}
+                      {/* phone — com formatação automática */}
+                      {q.type === 'phone' && (
+                        <input
+                          type="tel"
+                          inputMode="numeric"
+                          value={(answers[q.id] as string) ?? ''}
+                          onChange={(e) => handlePhoneChange(q.id, e.target.value)}
+                          onFocus={() => onFieldFocus(q.label)}
+                          onBlur={() => onFieldBlur(q.label)}
+                          onClick={() => onFieldClick(q.label)}
+                          placeholder={q.placeholder ?? '(00) 00000-0000'}
+                          maxLength={16}
+                          className={`w-full px-3.5 py-2.5 border rounded-xl text-gray-900 text-sm placeholder-gray-400 focus:outline-none focus:ring-1 transition-colors ${errorClasses}`}
+                        />
+                      )}
 
-                    {/* radio */}
-                    {q.type === 'radio' && (
-                      <div className="space-y-2">
-                        {(q.options ?? []).map((opt) => (
-                          <label
-                            key={opt}
-                            className="flex items-center gap-3 cursor-pointer group"
-                          >
-                            <input
-                              type="radio"
-                              name={q.id}
-                              value={opt}
-                              checked={(answers[q.id] as string) === opt}
-                              onChange={() => setAnswer(q.id, opt)}
-                              onFocus={() => onFieldFocus(q.label)}
-                              required={q.required}
-                              className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                            />
-                            <span className="text-sm text-gray-700">{opt}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
+                      {/* textarea */}
+                      {q.type === 'textarea' && (
+                        <textarea
+                          value={(answers[q.id] as string) ?? ''}
+                          onChange={(e) => setAnswer(q.id, e.target.value)}
+                          onFocus={() => onFieldFocus(q.label)}
+                          onBlur={() => onFieldBlur(q.label)}
+                          placeholder={q.placeholder ?? ''}
+                          rows={3}
+                          className={`w-full px-3.5 py-2.5 border rounded-xl text-gray-900 text-sm placeholder-gray-400 focus:outline-none focus:ring-1 transition-colors resize-none ${errorClasses}`}
+                        />
+                      )}
 
-                    {/* checkbox */}
-                    {q.type === 'checkbox' && (
-                      <div className="space-y-2">
-                        {(q.options ?? []).map((opt) => (
-                          <label
-                            key={opt}
-                            className="flex items-center gap-3 cursor-pointer"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={((answers[q.id] as string[]) ?? []).includes(opt)}
-                              onChange={() => toggleCheckbox(q.id, opt)}
-                              onFocus={() => onFieldFocus(q.label)}
-                              className="w-4 h-4 rounded text-blue-600 border-gray-300 focus:ring-blue-500"
-                            />
-                            <span className="text-sm text-gray-700">{opt}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))
+                      {/* select */}
+                      {q.type === 'select' && (
+                        <select
+                          value={(answers[q.id] as string) ?? ''}
+                          onChange={(e) => setAnswer(q.id, e.target.value)}
+                          onFocus={() => onFieldFocus(q.label)}
+                          onBlur={() => onFieldBlur(q.label)}
+                          className={`w-full px-3.5 py-2.5 border rounded-xl text-gray-900 text-sm focus:outline-none focus:ring-1 transition-colors bg-white ${errorClasses}`}
+                        >
+                          <option value="">{q.placeholder || 'Selecione...'}</option>
+                          {(q.options ?? []).map((opt) => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      )}
+
+                      {/* radio */}
+                      {q.type === 'radio' && (
+                        <div className="space-y-2">
+                          {(q.options ?? []).map((opt) => (
+                            <label
+                              key={opt}
+                              className="flex items-center gap-3 cursor-pointer group"
+                            >
+                              <input
+                                type="radio"
+                                name={q.id}
+                                value={opt}
+                                checked={(answers[q.id] as string) === opt}
+                                onChange={() => setAnswer(q.id, opt)}
+                                onFocus={() => onFieldFocus(q.label)}
+                                className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                              />
+                              <span className="text-sm text-gray-700">{opt}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* checkbox */}
+                      {q.type === 'checkbox' && (
+                        <div className="space-y-2">
+                          {(q.options ?? []).map((opt) => (
+                            <label
+                              key={opt}
+                              className="flex items-center gap-3 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={((answers[q.id] as string[]) ?? []).includes(opt)}
+                                onChange={() => toggleCheckbox(q.id, opt)}
+                                onFocus={() => onFieldFocus(q.label)}
+                                className="w-4 h-4 rounded text-blue-600 border-gray-300 focus:ring-blue-500"
+                              />
+                              <span className="text-sm text-gray-700">{opt}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Mensagem de erro por campo */}
+                      {fieldError && (
+                        <p className="mt-1 text-xs text-red-500">{fieldError}</p>
+                      )}
+                    </div>
+                  )
+                })
               )}
 
               {error && (

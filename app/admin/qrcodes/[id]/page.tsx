@@ -13,6 +13,20 @@ interface QRCodeData {
   brand_name: string
   is_locked: boolean
   is_active: boolean
+  webhook_url: string | null
+  webhook_events: string[]
+  webhook_active: boolean
+  webhook_message_template: string
+  webhook_abandon_delay_minutes: number
+}
+
+interface WebhookLog {
+  id: string
+  event_type: string
+  response_status: number | null
+  success: boolean
+  error_message: string | null
+  created_at: string
 }
 
 interface Questionnaire {
@@ -32,6 +46,9 @@ export default function EditQRCodePage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [webhookLogs, setWebhookLogs] = useState<WebhookLog[]>([])
+  const [testingWebhook, setTestingWebhook] = useState(false)
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -46,6 +63,15 @@ export default function EditQRCodePage() {
 
   useEffect(() => { load() }, [load])
 
+  // Carrega logs de webhook
+  useEffect(() => {
+    if (!id) return
+    fetch(`/api/admin/qrcodes/${id}/webhooks`)
+      .then((r) => r.json())
+      .then((data) => { if (Array.isArray(data)) setWebhookLogs(data) })
+      .catch(() => {})
+  }, [id])
+
   async function handleSave() {
     if (!qr || qr.is_locked) return
     setSaving(true)
@@ -58,6 +84,11 @@ export default function EditQRCodePage() {
         name: qr.name,
         brand_name: qr.brand_name,
         is_active: qr.is_active,
+        webhook_url: qr.webhook_url,
+        webhook_events: qr.webhook_events,
+        webhook_active: qr.webhook_active,
+        webhook_message_template: qr.webhook_message_template,
+        webhook_abandon_delay_minutes: qr.webhook_abandon_delay_minutes,
         questionnaire: {
           title: questionnaire?.title,
           description: questionnaire?.description,
@@ -288,6 +319,161 @@ export default function EditQRCodePage() {
               </svg>
               Abrir questionário
             </a>
+          </div>
+
+          {/* Webhook / Integração */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+                <svg className="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                    d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                </svg>
+                Webhook
+              </h2>
+              <label className={`flex items-center gap-2 ${locked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                <span className="text-xs text-gray-500">{qr.webhook_active ? 'Ativo' : 'Inativo'}</span>
+                <input
+                  type="checkbox"
+                  checked={qr.webhook_active}
+                  onChange={(e) => !locked && setQr({ ...qr, webhook_active: e.target.checked })}
+                  disabled={locked}
+                  className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-orange-500 focus:ring-orange-500"
+                />
+              </label>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">URL</label>
+              <input
+                type="url"
+                value={qr.webhook_url ?? ''}
+                onChange={(e) => setQr({ ...qr, webhook_url: e.target.value })}
+                disabled={locked}
+                placeholder="https://..."
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-orange-500 disabled:opacity-50 font-mono text-[11px]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Eventos</label>
+              <div className="space-y-1.5">
+                <label className={`flex items-center gap-2 ${locked ? 'opacity-50' : 'cursor-pointer'}`}>
+                  <input
+                    type="checkbox"
+                    checked={qr.webhook_events?.includes('form_submitted')}
+                    onChange={(e) => {
+                      if (locked) return
+                      const events = new Set(qr.webhook_events ?? [])
+                      if (e.target.checked) events.add('form_submitted')
+                      else events.delete('form_submitted')
+                      setQr({ ...qr, webhook_events: Array.from(events) })
+                    }}
+                    disabled={locked}
+                    className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-800 text-orange-500 focus:ring-orange-500"
+                  />
+                  <span className="text-xs text-gray-400">Enviado</span>
+                </label>
+                <label className={`flex items-center gap-2 ${locked ? 'opacity-50' : 'cursor-pointer'}`}>
+                  <input
+                    type="checkbox"
+                    checked={qr.webhook_events?.includes('form_abandoned')}
+                    onChange={(e) => {
+                      if (locked) return
+                      const events = new Set(qr.webhook_events ?? [])
+                      if (e.target.checked) events.add('form_abandoned')
+                      else events.delete('form_abandoned')
+                      setQr({ ...qr, webhook_events: Array.from(events) })
+                    }}
+                    disabled={locked}
+                    className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-800 text-orange-500 focus:ring-orange-500"
+                  />
+                  <span className="text-xs text-gray-400">Abandonado</span>
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Mensagem</label>
+              <input
+                type="text"
+                value={qr.webhook_message_template ?? ''}
+                onChange={(e) => setQr({ ...qr, webhook_message_template: e.target.value })}
+                disabled={locked}
+                placeholder="Novo formulário via: {{qr_code_nome}}"
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-[11px] focus:outline-none focus:border-orange-500 disabled:opacity-50"
+              />
+              <p className="text-[10px] text-gray-600 mt-1">Variáveis: {`{{qr_code_nome}}`} {`{{telefone}}`} {`{{nome}}`} {`{{email}}`}</p>
+            </div>
+
+            {qr.webhook_events?.includes('form_abandoned') && (
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">Delay abandono (min)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={60}
+                  value={qr.webhook_abandon_delay_minutes ?? 0}
+                  onChange={(e) => setQr({ ...qr, webhook_abandon_delay_minutes: parseInt(e.target.value) || 0 })}
+                  disabled={locked}
+                  className="w-20 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-orange-500 disabled:opacity-50"
+                />
+                <p className="text-[10px] text-gray-600 mt-1">0 = imediato</p>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 pt-2 border-t border-gray-800">
+              <button
+                onClick={async () => {
+                  setTestingWebhook(true)
+                  setTestResult(null)
+                  try {
+                    const r = await fetch(`/api/admin/qrcodes/${id}/webhooks`, { method: 'POST' })
+                    const data = await r.json()
+                    setTestResult({
+                      success: data.success,
+                      message: data.success ? `✓ ${data.status}` : `✗ ${data.error ?? data.status}`,
+                    })
+                    fetch(`/api/admin/qrcodes/${id}/webhooks`)
+                      .then((r) => r.json())
+                      .then((data) => { if (Array.isArray(data)) setWebhookLogs(data) })
+                  } catch {
+                    setTestResult({ success: false, message: '✗ Erro' })
+                  }
+                  setTestingWebhook(false)
+                }}
+                disabled={locked || testingWebhook || !qr.webhook_url}
+                className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
+              >
+                {testingWebhook ? '...' : 'Testar'}
+              </button>
+              {testResult && (
+                <span className={`text-xs ${testResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {testResult.message}
+                </span>
+              )}
+            </div>
+
+            {webhookLogs.length > 0 && (
+              <div className="pt-2 border-t border-gray-800">
+                <p className="text-[10px] font-medium text-gray-500 mb-1.5">Últimos disparos</p>
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {webhookLogs.slice(0, 5).map((log) => (
+                    <div key={log.id} className="flex items-center justify-between text-[10px] py-1 px-1.5 bg-gray-800/50 rounded">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full ${log.success ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                        <span className="text-gray-500">
+                          {log.event_type === 'form_submitted' ? 'Envio' : log.event_type === 'form_abandoned' ? 'Aband.' : log.event_type === 'test' ? 'Teste' : log.event_type}
+                        </span>
+                      </div>
+                      <span className="text-gray-600">
+                        {new Date(log.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

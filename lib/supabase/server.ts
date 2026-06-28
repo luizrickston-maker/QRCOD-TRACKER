@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { isAuthorizedAdmin } from '@/lib/auth'
 
 export async function createClient() {
   const cookieStore = await cookies()
@@ -24,6 +25,16 @@ export async function createClient() {
       },
     }
   )
+}
+
+// Retorna o usuário autenticado SE ele estiver na allowlist de admin.
+// Caso contrário, retorna null. Use nas rotas /api/admin/* como
+// defesa em profundidade (além do middleware).
+export async function getAdminUser() {
+  const auth = await createClient()
+  const { data: { user } } = await auth.auth.getUser()
+  if (!user || !isAuthorizedAdmin(user.email)) return null
+  return user
 }
 
 // Cliente com service role (bypassa RLS) — apenas server-side

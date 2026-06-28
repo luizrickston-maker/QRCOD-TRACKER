@@ -90,7 +90,7 @@ export default function AnalyticsPage() {
           <p className="text-2xl font-bold text-white mt-1">{data.totalScans.toLocaleString('pt-BR')}</p>
         </div>
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-          <p className="text-xs text-gray-500 uppercase font-medium tracking-wide">Questionários</p>
+          <p className="text-xs text-gray-500 uppercase font-medium tracking-wide">Formulários Recebidos</p>
           <p className="text-2xl font-bold text-white mt-1">{data.totalSubmissions.toLocaleString('pt-BR')}</p>
         </div>
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">

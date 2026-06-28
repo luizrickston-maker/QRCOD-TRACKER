@@ -154,8 +154,14 @@ CREATE INDEX idx_ux_events_type ON public.ux_events(event_type);
 
 -- --------------------------------------------------------
 -- ROW LEVEL SECURITY
--- Tabelas públicas (leitura/escrita via service role apenas)
--- O frontend usa a service role key para operações server-side
+-- TODO acesso às tabelas é feito server-side via service role,
+-- que ignora RLS. Habilitamos RLS SEM políticas públicas: assim
+-- a anon key (que é pública, embutida no cliente) não tem nenhum
+-- acesso direto às tabelas pela REST API do Supabase.
+--
+-- ⚠️ NÃO recrie políticas "public_*" com USING (TRUE) /
+-- WITH CHECK (TRUE): isso reabriria leitura/escrita direta pela
+-- anon key, permitindo enumeração de dados e spam no banco.
 -- --------------------------------------------------------
 ALTER TABLE public.qr_codes          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.questionnaires     ENABLE ROW LEVEL SECURITY;
@@ -164,45 +170,6 @@ ALTER TABLE public.scans              ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.submissions        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.submission_answers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ux_events          ENABLE ROW LEVEL SECURITY;
-
--- Service role bypassa RLS automaticamente.
--- Políticas abaixo permitem leitura pública das tabelas necessárias
--- para renderizar o questionário (sem autenticação do usuário final).
-
--- Leitura pública de qr_codes ativos (para a página do questionário)
-CREATE POLICY "public_read_active_qrcodes"
-  ON public.qr_codes FOR SELECT
-  USING (is_active = TRUE);
-
--- Leitura pública de questionnaires (renderização do formulário)
-CREATE POLICY "public_read_questionnaires"
-  ON public.questionnaires FOR SELECT
-  USING (TRUE);
-
--- Leitura pública de questions (renderização do formulário)
-CREATE POLICY "public_read_questions"
-  ON public.questions FOR SELECT
-  USING (TRUE);
-
--- Inserção pública em scans (anon pode inserir)
-CREATE POLICY "public_insert_scans"
-  ON public.scans FOR INSERT
-  WITH CHECK (TRUE);
-
--- Inserção pública em submissions
-CREATE POLICY "public_insert_submissions"
-  ON public.submissions FOR INSERT
-  WITH CHECK (TRUE);
-
--- Inserção pública em submission_answers
-CREATE POLICY "public_insert_answers"
-  ON public.submission_answers FOR INSERT
-  WITH CHECK (TRUE);
-
--- Inserção pública em ux_events
-CREATE POLICY "public_insert_ux_events"
-  ON public.ux_events FOR INSERT
-  WITH CHECK (TRUE);
 
 -- --------------------------------------------------------
 -- VIEWS ÚTEIS PARA O DASHBOARD

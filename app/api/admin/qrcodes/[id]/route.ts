@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient } from '@/lib/supabase/server'
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient, getAdminUser } from '@/lib/supabase/server'
+import { assertSafeWebhookUrl } from '@/lib/webhook'
 
 type Params = { params: Promise<{ id: string }> }
 
-async function requireAuth() {
-  const auth = await createClient()
-  const { data: { user } } = await auth.auth.getUser()
-  return user
-}
+const requireAuth = getAdminUser
 
 // GET /api/admin/qrcodes/[id] — detalhes completos (qr + questionnaire + questions)
 export async function GET(_: NextRequest, { params }: Params) {
@@ -76,12 +72,35 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (body.action === 'lock') qrFields.is_locked = true
   if (body.action === 'unlock') qrFields.is_locked = false
 
+  // Webhook fields
+  if (body.webhook_url !== undefined) {
+    // Valida URL (anti-SSRF) quando não-vazia
+    if (body.webhook_url) {
+      try {
+        assertSafeWebhookUrl(body.webhook_url)
+      } catch (e) {
+        return NextResponse.json(
+          { error: e instanceof Error ? e.message : 'URL de webhook inválida' },
+          { status: 400 }
+        )
+      }
+    }
+    qrFields.webhook_url = body.webhook_url
+  }
+  if (body.webhook_events !== undefined) qrFields.webhook_events = body.webhook_events
+  if (body.webhook_active !== undefined) qrFields.webhook_active = body.webhook_active
+  if (body.webhook_message_template !== undefined) qrFields.webhook_message_template = body.webhook_message_template
+  if (body.webhook_abandon_delay_minutes !== undefined) qrFields.webhook_abandon_delay_minutes = body.webhook_abandon_delay_minutes
+
   if (Object.keys(qrFields).length > 0) {
     const { error } = await supabase
       .from('qr_codes')
       .update(qrFields)
       .eq('id', id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      console.error('[qrcode-update]', error.message)
+      return NextResponse.json({ error: 'Erro ao atualizar QR Code.' }, { status: 500 })
+    }
   }
 
   // Atualiza questionário
@@ -172,7 +191,10 @@ export async function DELETE(_: NextRequest, { params }: Params) {
   }
 
   const { error } = await supabase.from('qr_codes').delete().eq('id', id)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[qrcode-delete]', error.message)
+    return NextResponse.json({ error: 'Erro ao excluir QR Code.' }, { status: 500 })
+  }
 
   return NextResponse.json({ ok: true })
 }

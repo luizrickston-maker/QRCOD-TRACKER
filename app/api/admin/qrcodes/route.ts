@@ -1,33 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient } from '@/lib/supabase/server'
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient, getAdminUser } from '@/lib/supabase/server'
 import { slugify } from '@/lib/utils'
 
 // GET /api/admin/qrcodes — lista todos os QR codes com stats
 export async function GET() {
+  const user = await getAdminUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const supabase = createServiceClient()
 
-  const { data, error } = await supabase
-    .from('v_qr_conversion')
+  // Query qr_codes directly and manually compute stats
+  const { data: qrcodes, error: qrError } = await supabase
+    .from('qr_codes')
     .select('*')
-    .order('created_at', { ascending: false, referencedTable: 'qr_codes' })
+    .order('created_at', { ascending: false })
 
-  if (error) {
-    // Fallback se a view não existir
-    const { data: fallback } = await supabase
-      .from('qr_codes')
-      .select('*')
-      .order('created_at', { ascending: false })
-    return NextResponse.json(fallback ?? [])
+  if (qrError || !qrcodes) {
+    return NextResponse.json([])
   }
 
-  return NextResponse.json(data ?? [])
+  // Get conversion stats from the view
+  const { data: convData } = await supabase
+    .from('v_qr_conversion')
+    .select('id, total_scans, total_submissions, conversion_rate')
+
+  const statsMap = new Map<string, { total_scans: number; total_submissions: number; conversion_rate: number }>()
+  for (const row of convData ?? []) {
+    statsMap.set(row.id, {
+      total_scans: Number(row.total_scans ?? 0),
+      total_submissions: Number(row.total_submissions ?? 0),
+      conversion_rate: Number(row.conversion_rate ?? 0),
+    })
+  }
+
+  const result = qrcodes.map((qr: { id: string; [key: string]: unknown }) => {
+    const stats = statsMap.get(qr.id)
+    return {
+      ...qr,
+      total_scans: stats?.total_scans ?? 0,
+      total_submissions: stats?.total_submissions ?? 0,
+      conversion_rate: stats?.conversion_rate ?? 0,
+    }
+  })
+
+  return NextResponse.json(result)
 }
 
 // POST /api/admin/qrcodes — cria novo QR code + questionário padrão
 export async function POST(request: NextRequest) {
-  const auth = await createClient()
-  const { data: { user } } = await auth.auth.getUser()
+  const user = await getAdminUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await request.json()
@@ -59,7 +80,8 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (qrError) {
-    return NextResponse.json({ error: qrError.message }, { status: 500 })
+    console.error('[qrcode-create]', qrError.message)
+    return NextResponse.json({ error: 'Erro ao criar QR Code.' }, { status: 500 })
   }
 
   // Cria questionário padrão associado

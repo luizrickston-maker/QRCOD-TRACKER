@@ -96,7 +96,7 @@ export default function DashboardPage() {
       {/* Métricas globais */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="Total de Scans" value={stats.totalScans.toLocaleString('pt-BR')} />
-        <StatCard label="Questionários Enviados" value={stats.totalSubmissions.toLocaleString('pt-BR')} />
+        <StatCard label="Formulários Recebidos" value={stats.totalSubmissions.toLocaleString('pt-BR')} />
         <StatCard
           label="Taxa de Conversão"
           value={`${stats.conversionRate}%`}
@@ -204,7 +204,7 @@ export default function DashboardPage() {
                 <th className="text-left px-4 py-3 font-medium">Nome</th>
                 <th className="text-left px-4 py-3 font-medium">Slug</th>
                 <th className="text-right px-4 py-3 font-medium">Scans</th>
-                <th className="text-right px-4 py-3 font-medium">Envios</th>
+                <th className="text-right px-4 py-3 font-medium">Formulários</th>
                 <th className="text-right px-4 py-3 font-medium">Conversão</th>
                 <th className="text-center px-4 py-3 font-medium">Status</th>
               </tr>

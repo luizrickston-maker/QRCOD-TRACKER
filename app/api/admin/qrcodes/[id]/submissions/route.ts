@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient } from '@/lib/supabase/server'
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient, getAdminUser } from '@/lib/supabase/server'
 
 type Params = { params: Promise<{ id: string }> }
 
 // GET /api/admin/qrcodes/[id]/submissions
 // Query params: page (default 0), limit (default 20)
 export async function GET(request: NextRequest, { params }: Params) {
-  const auth = await createClient()
-  const { data: { user } } = await auth.auth.getUser()
+  const user = await getAdminUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params

@@ -1,17 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient } from '@/lib/supabase/server'
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient, getAdminUser } from '@/lib/supabase/server'
 
 type Params = { params: Promise<{ id: string }> }
 
 // GET /api/admin/qrcodes/[id]/analytics
 export async function GET(_: NextRequest, { params }: Params) {
-  const auth = await createClient()
-  const { data: { user } } = await auth.auth.getUser()
+  const user = await getAdminUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
   const supabase = createServiceClient()
+
+  // Get scan IDs for this QR code (needed for ux_events query)
+  const { data: scanRows } = await supabase
+    .from('scans')
+    .select('id')
+    .eq('qr_code_id', id)
+  const scanIds = (scanRows ?? []).map((r: { id: string }) => r.id)
 
   const [scansResult, submissionsResult, devicesResult, citiesResult, dailyResult, uxResult] =
     await Promise.allSettled([
@@ -42,16 +47,13 @@ export async function GET(_: NextRequest, { params }: Params) {
         .select('*')
         .eq('qr_code_id', id),
 
-      supabase
-        .from('ux_events')
-        .select('event_type, field_name, metadata')
-        .in('scan_id',
-          supabase
-            .from('scans')
-            .select('id')
-            .eq('qr_code_id', id)
-        )
-        .eq('event_type', 'abandon'),
+      scanIds.length > 0
+        ? supabase
+            .from('ux_events')
+            .select('event_type, field_name, metadata')
+            .in('scan_id', scanIds)
+            .eq('event_type', 'abandon')
+        : Promise.resolve({ data: [] }),
     ])
 
   const totalScans =
@@ -69,7 +71,7 @@ export async function GET(_: NextRequest, { params }: Params) {
   const abandons =
     uxResult.status === 'fulfilled' ? (uxResult.value.data ?? []) : []
 
-  // Agrupa abandons por último campo
+  // Group abandons by last field
   const abandonByField: Record<string, number> = {}
   for (const ev of abandons) {
     const field =

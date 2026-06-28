@@ -1,5 +1,5 @@
 /**
- * Detecção básica de bots por User-Agent.
+ * Detecção de bots por User-Agent.
  * Não bloqueia — apenas marca o registro para filtragem no dashboard.
  */
 
@@ -9,15 +9,31 @@ const BOT_PATTERNS = [
   /spider/i,
   /slurp/i,
   /googlebot/i,
+  /Google-InspectionTool/i,
+  /Google-Read-Aloud/i,
+  /Google-Safety/i,
+  /Google-Extended/i,
+  /Google-Site-Verification/i,
+  /Googlebot-Image/i,
+  /Googlebot-Video/i,
+  /Mediapartners-Google/i,
+  /AdsBot-Google/i,
+  /APIs-Google/i,
+  /FeedFetcher-Google/i,
   /bingbot/i,
+  /bingpreview/i,
   /yandex/i,
   /baidu/i,
   /duckduckbot/i,
   /facebookexternalhit/i,
+  /facebookcatalog/i,
   /twitterbot/i,
   /linkedinbot/i,
   /whatsapp/i,
   /telegrambot/i,
+  /discordbot/i,
+  /slackbot/i,
+  /viber/i,
   /applebot/i,
   /semrushbot/i,
   /ahrefsbot/i,
@@ -39,6 +55,26 @@ const BOT_PATTERNS = [
   /PhantomJS/i,
   /Puppeteer/i,
   /Playwright/i,
+  /PetalBot/i,
+  /SeznamBot/i,
+  /Qwantify/i,
+  /archive\.org_bot/i,
+  /CCBot/i,
+  /GPTBot/i,
+  /ChatGPT-User/i,
+  /anthropic-ai/i,
+  /ClaudeBot/i,
+  /Google-Safety/i,
+  /Vercelbot/i,
+  /prerender/i,
+  /Lighthouse/i,
+  /PTST/i, // PageSpeed Insights
+  /Chrome-Lighthouse/i,
+  /Speed Insights/i,
+  /GTmetrix/i,
+  /pingdom/i,
+  /UptimeRobot/i,
+  /StatusCake/i,
 ]
 
 export function isBot(userAgent: string | null): boolean {

@@ -21,8 +21,27 @@ interface GeoData {
   lon?: number
 }
 
-async function getGeoData(ip: string): Promise<GeoData> {
-  // ip-api.com: gratuito, sem chave, ~50ms de latência média
+function getVercelGeo(headers: Headers): GeoData {
+  // Vercel injeta headers de geolocalização automaticamente nas edge functions.
+  // São muito mais precisos que ip-api.com porque usam o IP real do cliente.
+  const city = headers.get('x-vercel-ip-city') ?? undefined
+  const region = headers.get('x-vercel-ip-country-region') ?? undefined
+  const country = headers.get('x-vercel-ip-country') ?? undefined
+  const lat = headers.get('x-vercel-ip-latitude')
+  const lon = headers.get('x-vercel-ip-longitude')
+
+  return {
+    city: city ? decodeURIComponent(city) : undefined,
+    region: region ? decodeURIComponent(region) : undefined,
+    country: undefined, // Vercel dá o código, não o nome completo
+    countryCode: country ?? undefined,
+    lat: lat ? parseFloat(lat) : undefined,
+    lon: lon ? parseFloat(lon) : undefined,
+  }
+}
+
+async function getGeoDataFallback(ip: string): Promise<GeoData> {
+  // Fallback: ip-api.com para dev local ou quando headers Vercel não estão presentes
   const cleanIp = ip.replace('::ffff:', '').split(',')[0].trim()
 
   // IPs locais não têm geolocalização
@@ -83,8 +102,12 @@ export async function GET(
     const botDetected = isBot(userAgent)
     const parsedUA = parseUserAgent(userAgent)
 
-    // Busca o qr_code_id pelo slug (com timeout)
+    // Busca o qr_code_id pelo slug
     const supabase = createServiceClient()
+
+    // Geolocalização: usa headers Vercel (mais precisos) com fallback para ip-api.com
+    const vercelGeo = getVercelGeo(headers)
+    const hasVercelGeo = !!(vercelGeo.city || vercelGeo.countryCode)
 
     const [qrResult, geoResult] = await Promise.allSettled([
       supabase
@@ -92,13 +115,19 @@ export async function GET(
         .select('id, is_active')
         .eq('slug', slug)
         .single(),
-      botDetected ? Promise.resolve({}) : getGeoData(ip),
+      botDetected || hasVercelGeo
+        ? Promise.resolve(vercelGeo)
+        : getGeoDataFallback(ip),
     ])
 
     const qrCode =
       qrResult.status === 'fulfilled' ? qrResult.value.data : null
     const geo: GeoData =
-      geoResult.status === 'fulfilled' ? (geoResult.value as GeoData) : {}
+      geoResult.status === 'fulfilled'
+        ? (geoResult.value as GeoData)
+        : hasVercelGeo
+          ? vercelGeo
+          : {}
 
     if (qrCode) {
       // Insere o scan de forma não-bloqueante (fire-and-forget)

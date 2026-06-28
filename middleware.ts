@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
+import { isAuthorizedAdmin } from '@/lib/auth'
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -33,18 +34,21 @@ export async function middleware(request: NextRequest) {
   const isLoginPage = request.nextUrl.pathname === '/admin/login'
   const isApiAdminRoute = request.nextUrl.pathname.startsWith('/api/admin')
 
-  // Redireciona para login se não autenticado em rotas admin
-  if (isAdminRoute && !isLoginPage && !user) {
+  // Só é admin quem está autenticado E está na allowlist (ADMIN_EMAILS)
+  const isAdmin = !!user && isAuthorizedAdmin(user.email)
+
+  // Redireciona para login se não autorizado em rotas admin
+  if (isAdminRoute && !isLoginPage && !isAdmin) {
     return NextResponse.redirect(new URL('/admin/login', request.url))
   }
 
-  // Redireciona para dashboard se já autenticado e tenta acessar login
-  if (isLoginPage && user) {
+  // Redireciona para dashboard se já autorizado e tenta acessar login
+  if (isLoginPage && isAdmin) {
     return NextResponse.redirect(new URL('/admin/dashboard', request.url))
   }
 
   // Protege API routes de admin
-  if (isApiAdminRoute && !user) {
+  if (isApiAdminRoute && !isAdmin) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

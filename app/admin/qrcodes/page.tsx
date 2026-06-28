@@ -111,7 +111,7 @@ export default function QRCodesPage() {
               <tr className="text-xs text-gray-500 uppercase border-b border-gray-800">
                 <th className="text-left px-4 py-3 font-medium">Nome / Slug</th>
                 <th className="text-right px-4 py-3 font-medium">Scans</th>
-                <th className="text-right px-4 py-3 font-medium">Envios</th>
+                <th className="text-right px-4 py-3 font-medium">Formulários</th>
                 <th className="text-right px-4 py-3 font-medium">Conversão</th>
                 <th className="text-center px-4 py-3 font-medium">Status</th>
                 <th className="text-right px-4 py-3 font-medium">Ações</th>
