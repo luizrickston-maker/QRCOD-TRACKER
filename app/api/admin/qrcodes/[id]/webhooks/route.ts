@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient, getAdminUser } from '@/lib/supabase/server'
-import { assertSafeWebhookUrl } from '@/lib/webhook'
+import { normalizeBrazilPhone, sendAgZapText } from '@/lib/agzap'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -37,72 +37,47 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const { data: qr } = await supabase
     .from('qr_codes')
-    .select('id, slug, name, webhook_url, webhook_message_template')
+    .select('id, slug, name, webhook_message_template')
     .eq('id', id)
     .single()
 
-  // Usa URL do body (formulário) se disponível, senão do banco
-  const webhookUrl = body.webhook_url || qr?.webhook_url
-
-  if (!qr || !webhookUrl) {
-    return NextResponse.json({ error: 'Webhook URL não configurada' }, { status: 400 })
+  if (!qr) {
+    return NextResponse.json({ error: 'QR Code não encontrado' }, { status: 404 })
   }
 
-  // Bloqueia SSRF (URL interna/privada) antes de testar
-  try {
-    assertSafeWebhookUrl(webhookUrl)
-  } catch (e) {
+  // Número de destino do teste (informado pelo admin)
+  const number = normalizeBrazilPhone(body.number)
+  if (!number) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : 'URL inválida' },
+      { error: 'Informe um número válido (ex: (11) 99999-9999).' },
       { status: 400 }
     )
   }
 
-  // Payload de teste
+  const mensagem = `[TESTE] ${qr.name}: integração do AgZap funcionando ✅`
+
   const testPayload = {
     evento: 'test',
-    telefone: '(00) 00000-0000',
-    nome: 'Teste QR Tracker',
-    email: 'teste@qrtracker.com',
-    mensagem: `[TESTE] Webhook do QR Code: ${qr.name}`,
-    origem: 'qr-tracker',
+    number,
+    mensagem,
     qr_code_slug: qr.slug,
     qr_code_nome: qr.name,
-    respostas: {
-      'Nome completo': 'Teste QR Tracker',
-      'Telefone / WhatsApp': '(00) 00000-0000',
-      'E-mail': 'teste@qrtracker.com',
-    },
-    metadata: {
-      teste: true,
-      data_hora: new Date().toISOString(),
-    },
+    metadata: { teste: true, data_hora: new Date().toISOString() },
   }
 
   try {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 8000)
-
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(testPayload),
-      signal: controller.signal,
-    })
-
-    clearTimeout(timeout)
-    const responseBody = await res.text().catch(() => '')
+    const result = await sendAgZapText(number, mensagem)
 
     await supabase.from('webhook_logs').insert({
       qr_code_id: qr.id,
       event_type: 'test',
       payload: testPayload,
-      response_status: res.status,
-      response_body: responseBody.slice(0, 2000),
-      success: res.ok,
+      response_status: result.status,
+      response_body: result.body,
+      success: result.ok,
     })
 
-    return NextResponse.json({ success: res.ok, status: res.status, body: responseBody.slice(0, 500) })
+    return NextResponse.json({ success: result.ok, status: result.status, body: result.body.slice(0, 500) })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
 

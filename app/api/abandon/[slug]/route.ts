@@ -44,7 +44,6 @@ export async function POST(
     // Verifica se webhook de abandono está ativo
     const shouldFireWebhook =
       qr.webhook_active &&
-      qr.webhook_url &&
       Array.isArray(qr.webhook_events) &&
       qr.webhook_events.includes('form_abandoned')
 

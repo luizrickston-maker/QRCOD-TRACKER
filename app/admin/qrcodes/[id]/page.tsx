@@ -344,7 +344,7 @@ export default function EditQRCodePage() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1.5">URL</label>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">URL (opcional)</label>
               <input
                 type="url"
                 value={qr.webhook_url ?? ''}
@@ -353,6 +353,7 @@ export default function EditQRCodePage() {
                 placeholder="https://..."
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-orange-500 disabled:opacity-50 font-mono text-[11px]"
               />
+              <p className="text-[10px] text-gray-600 mt-1">As mensagens são enviadas pelo AgZap (token no servidor). Este campo não é mais necessário.</p>
             </div>
 
             <div>
@@ -400,10 +401,10 @@ export default function EditQRCodePage() {
                 value={qr.webhook_message_template ?? ''}
                 onChange={(e) => setQr({ ...qr, webhook_message_template: e.target.value })}
                 disabled={locked}
-                placeholder="Novo formulário via: {{qr_code_nome}}"
+                placeholder="Olá {{nome}}! A Chapada Digital recebeu seu formulário..."
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-[11px] focus:outline-none focus:border-orange-500 disabled:opacity-50"
               />
-              <p className="text-[10px] text-gray-600 mt-1">Variáveis: {`{{qr_code_nome}}`} {`{{telefone}}`} {`{{nome}}`} {`{{email}}`}</p>
+              <p className="text-[10px] text-gray-600 mt-1">Variáveis: {`{{qr_code_nome}}`} {`{{telefone}}`} {`{{nome}}`} {`{{email}}`} · Em branco usa a mensagem padrão da Chapada Digital.</p>
             </div>
 
             {qr.webhook_events?.includes('form_abandoned') && (
@@ -425,14 +426,20 @@ export default function EditQRCodePage() {
             <div className="flex items-center gap-2 pt-2 border-t border-gray-800">
               <button
                 onClick={async () => {
+                  const number = window.prompt('Número de WhatsApp para o teste (ex: (11) 99999-9999):')
+                  if (!number) return
                   setTestingWebhook(true)
                   setTestResult(null)
                   try {
-                    const r = await fetch(`/api/admin/qrcodes/${id}/webhooks`, { method: 'POST' })
+                    const r = await fetch(`/api/admin/qrcodes/${id}/webhooks`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ number }),
+                    })
                     const data = await r.json()
                     setTestResult({
                       success: data.success,
-                      message: data.success ? `✓ ${data.status}` : `✗ ${data.error ?? data.status}`,
+                      message: data.success ? `✓ enviado` : `✗ ${data.error ?? data.status}`,
                     })
                     fetch(`/api/admin/qrcodes/${id}/webhooks`)
                       .then((r) => r.json())
@@ -442,7 +449,7 @@ export default function EditQRCodePage() {
                   }
                   setTestingWebhook(false)
                 }}
-                disabled={locked || testingWebhook || !qr.webhook_url}
+                disabled={locked || testingWebhook}
                 className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
               >
                 {testingWebhook ? '...' : 'Testar'}

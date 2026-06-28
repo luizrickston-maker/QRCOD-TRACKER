@@ -1,4 +1,5 @@
 import { createServiceClient } from '@/lib/supabase/server'
+import { normalizeBrazilPhone, sendAgZapText } from '@/lib/agzap'
 
 export interface WebhookPayload {
   evento: 'form_submitted' | 'form_abandoned'
@@ -124,7 +125,8 @@ export function interpolateTemplate(
 }
 
 /**
- * Dispara o webhook e loga o resultado. Nunca bloqueia o fluxo principal.
+ * Envia a mensagem do payload via AgZap (WhatsApp) para o telefone
+ * preenchido no formulário e loga o resultado. Nunca bloqueia o fluxo.
  */
 export async function fireWebhook(
   config: WebhookConfig,
@@ -133,29 +135,20 @@ export async function fireWebhook(
   const supabase = createServiceClient()
 
   try {
-    // Bloqueia SSRF antes de qualquer requisição de saída
-    assertSafeWebhookUrl(config.webhook_url)
+    const number = normalizeBrazilPhone(payload.telefone)
+    if (!number) {
+      throw new Error(`Telefone inválido para envio: "${payload.telefone}"`)
+    }
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 8000)
-
-    const res = await fetch(config.webhook_url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    })
-
-    clearTimeout(timeout)
-    const responseBody = await res.text().catch(() => '')
+    const result = await sendAgZapText(number, payload.mensagem)
 
     await supabase.from('webhook_logs').insert({
       qr_code_id: config.qr_code_id,
       event_type: payload.evento,
       payload: payload as unknown as Record<string, unknown>,
-      response_status: res.status,
-      response_body: responseBody.slice(0, 2000),
-      success: res.ok,
+      response_status: result.status,
+      response_body: result.body,
+      success: result.ok,
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
@@ -188,8 +181,10 @@ export async function fireSubmitWebhook(
     respostas[a.question_label] = a.answer
   }
 
+  const saudacao = nome ? `Olá, ${nome}!` : 'Olá!'
   const mensagem = interpolateTemplate(
-    qr.webhook_message_template || 'Novo formulário recebido via QR Code: {{qr_code_nome}}',
+    qr.webhook_message_template ||
+      `${saudacao} 👋 A Chapada Digital recebeu seu formulário e já está preparando a solução ideal para a sua empresa. Em breve entraremos em contato!`,
     { qr_code_nome: qr.name, qr_code_slug: qr.slug, telefone, nome, email }
   )
 
