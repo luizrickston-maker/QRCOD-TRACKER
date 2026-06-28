@@ -220,13 +220,17 @@ WHERE is_bot = FALSE
 GROUP BY qr_code_id, device_type;
 
 -- View: top cidades
+-- Agrupa por country_code (consistente) em vez de country (nome completo),
+-- pois a geo da Vercel grava country = NULL e o fallback ip-api grava o nome,
+-- o que separaria a mesma cidade em linhas distintas.
 CREATE OR REPLACE VIEW public.v_city_stats AS
 SELECT
   qr_code_id,
   city,
-  country,
+  country_code,
+  MAX(country) AS country,
   COUNT(*) AS count
 FROM public.scans
 WHERE is_bot = FALSE AND city IS NOT NULL
-GROUP BY qr_code_id, city, country
+GROUP BY qr_code_id, city, country_code
 ORDER BY count DESC;
